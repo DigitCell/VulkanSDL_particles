@@ -1,0 +1,148 @@
+#version 460
+
+#extension  GL_EXT_shader_atomic_float: enable
+
+#include "common.glsl"
+
+#define PARTICLE_BUFFER_BIND_ID     0
+#define MAPSIZE_BUFFER_BIND_ID      1
+#define MAPDATA_BUFFER_BIND_ID      2
+
+#define neightb_BUFFER_BIND_ID      3
+#define neightbSort_BUFFER_BIND_ID  4
+#define neightbInfo_BUFFER_BIND_ID  5
+
+#define SIMPARAMS_UNIFORM_BIND_ID   6
+
+
+layout(std430, binding = PARTICLE_BUFFER_BIND_ID ) buffer Pos {
+   Particle particles[ ];
+};
+
+layout(std430, binding = MAPSIZE_BUFFER_BIND_ID ) buffer MapSize {
+   int mapIndexSize[ ];
+};
+
+layout(std430, binding = MAPDATA_BUFFER_BIND_ID ) buffer MapData {
+   int mapData[ ];
+};
+
+layout(std430, binding = neightb_BUFFER_BIND_ID  ) buffer neightb_BUFFER {
+   int neightb[ ];
+};
+
+layout(std430, binding = neightbSort_BUFFER_BIND_ID  ) buffer neightbSort_BUFFER {
+   int neightbSort[ ];
+};
+
+layout(std430, binding = neightbInfo_BUFFER_BIND_ID  ) buffer neightbInfo_BUFFER {
+   float neightbInfo[ ];
+};
+
+layout (std430, binding = SIMPARAMS_UNIFORM_BIND_ID) uniform SIMPARAMS {
+  SimParams simParams;
+};
+
+layout (local_size_x = 256) in;
+
+int GetIndex(int x, int y)
+{
+    return y*simParams.mapSize.x+x;
+}
+
+int GetIndexMap(int i, int x, int y)
+{
+    int sindex=y*simParams.mapSize.x+x;
+    return sindex*simParams.maxMapCellSize+i;
+}
+
+int GetNeightbIndex(int index, int neightb_index)
+{
+    return index*simParams.maxNeightbSize+neightb_index;
+}
+
+void NeightbUpdate(int index, vec2 pos, ivec2 size)
+{
+    const Particle p =  particles[index];
+
+    int pX =int(trunc(p.pos.x / simParams.mapCellSize.x));
+    int pY =int(trunc(p.pos.y / simParams.mapCellSize.y));
+
+    if (pX < 0) pX =0;
+    else if (pX > size.x - 1) pX = size.x - 1;
+
+    if (pY < 0) pY = 0;
+    else if (pY > size.y - 1)
+        pY = size.y - 1;
+
+    //neightbSize[index]=0;
+    particles[index].neightbSize=0;
+    int neightbSizeIndex=0;
+
+    int mapLookUp=2;
+
+    for (int mapX = pX -  mapLookUp; mapX <= pX + mapLookUp; mapX++){
+        for (int mapY = pY -  mapLookUp; mapY <= pY +  mapLookUp; mapY++){
+
+            if(mapX<0 || mapY<0 || mapX>simParams.mapSize.x-1 || mapY>simParams.mapSize.y-1)
+                 continue;
+            int cellAmount=mapIndexSize[GetIndex(mapX,mapY)];
+
+            if(cellAmount==0)
+                continue;
+          //  if(cellAmount>57)
+          //      continue;
+
+            for(int ip=0; ip<cellAmount;ip++)
+            {
+                int indexJ=mapData[GetIndexMap(ip,mapX,mapY)];
+                if(indexJ!=index)
+                {
+                  Particle pj =  particles[indexJ];
+                  float r=length(pj.pos.xy-p.pos.xy);
+
+                  //save this neighbor
+                //  if (q < 1 && q > 0.0000000000001f){
+                  if(r>0.0 && r<(mapLookUp)*simParams.mapCellSize.x)
+                  {
+                      int jn=neightbSizeIndex;
+                    //  int jn=min(neightbSize[index],16);// (neightb_size[i]==0)?0:neightb_size[i]-1;
+                      //if (neightbSize[index] <maxNeightbSize)
+                      if (neightbSizeIndex<simParams.maxNeightbSize)
+                      {
+                          //  neightb[GetNeightbIndex(index, j)]=mapData[GetIndexMap(ip,mapX,mapY)];
+                          int nmpIndex=mapData[GetIndexMap(ip,mapX,mapY)];
+                          int getIndex=GetNeightbIndex(index, jn);
+                          neightb[getIndex]=nmpIndex;
+                          neightbSort[getIndex]=nmpIndex;
+                          neightbInfo[getIndex]=r;
+                          //  neightb_r[GetIndexNeightb(i,j)]=r;
+                          //  neightb_Lij[GetIndexNeightb(i,j)]=particleHeight;
+                          neightbSizeIndex++;
+                        //  int indexAdd=atomicAdd(neightbSize[index],1);
+                      }
+
+                  }
+              }
+          }
+        }
+    }
+
+    //neightbSize[index]=neightbSizeIndex;
+    particles[index].neightbSize=neightbSizeIndex;
+
+}
+
+
+void main() {
+
+  int index = int(gl_GlobalInvocationID.x);
+  if (index >=simParams.numParticle || index<0)
+  return;
+
+  NeightbUpdate(index, particles[index].pos, simParams.mapSize);
+
+  //barrier             ();
+  //NeightbSort(indx, pointData[indx].coord, mapSize);
+
+}

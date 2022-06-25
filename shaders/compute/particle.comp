@@ -1,0 +1,248 @@
+#version 460
+#extension  GL_EXT_shader_atomic_float: enable
+
+#include "common.glsl"
+
+#include "noise.glsl"
+#include "noise/perlinNoise.glsl"
+
+#define PARTICLE_BUFFER_BIND_ID             0
+#define INSTANCE_BUFFER_BIND_ID             1
+
+#define neightb_BUFFER_BIND_ID              2
+#define neightbSort_BUFFER_BIND_ID          3
+#define neightbInfo_BUFFER_BIND_ID          4
+
+#define CONSTRAINTSDATA_BUFFER_BIND_ID      5
+
+
+#define SIMPARAMS_UNIFORM_BIND_ID           6
+
+#define SIMDYNAMICPARAMS_UNIFORM_BIND_ID    8
+
+#define CONSTRAINTNUM_BUFFER_BIND_ID        9
+
+
+layout(std430, binding = PARTICLE_BUFFER_BIND_ID ) buffer Pos {
+   Particle particles[ ];
+};
+
+layout(std430, binding = INSTANCE_BUFFER_BIND_ID) buffer PosIns {
+   InstanceData  instanceData [ ];
+};
+
+layout(std430, binding = neightb_BUFFER_BIND_ID  ) buffer neightb_BUFFER {
+   int neightb[ ];
+};
+
+layout(std430, binding = neightbSort_BUFFER_BIND_ID  ) buffer neightbSort_BUFFER {
+   int neightbSort[ ];
+};
+
+layout(std430, binding = neightbInfo_BUFFER_BIND_ID  ) buffer neightbInfo_BUFFER {
+   float neightbInfo[ ];
+};
+
+layout(std430, binding = CONSTRAINTSDATA_BUFFER_BIND_ID) buffer CONSTRAINTSDATA {
+   Constraint constraintsData[ ];
+};
+
+
+layout (std430, binding = SIMPARAMS_UNIFORM_BIND_ID) uniform SIMPARAMS {
+  SimParams simParams;
+};
+
+layout (std430, binding = SIMDYNAMICPARAMS_UNIFORM_BIND_ID ) uniform SIMDYNAMICPARAMS {
+  SimDynamicParametrs simDynParams;
+};
+
+layout(std430, binding = CONSTRAINTNUM_BUFFER_BIND_ID) buffer CONSTRAINTNUM {
+   int constraintNum[ ];
+};
+
+layout (local_size_x = 256) in;
+
+
+int GetIndex(int x, int y)
+{
+    return y*simParams.mapSize.x+x;
+}
+
+int GetIndexMap(int i, int x, int y)
+{
+    int sindex=y*simParams.mapSize.x+x;
+    return sindex*simParams.maxMapCellSize+i;
+}
+
+int GetNeightbIndex(int index, int neightb_index)
+{
+    return index*simParams.maxNeightbSize+neightb_index;
+}
+
+ivec3 GetConstraintIndexVec(int id1, int id2)
+{
+    int i1=id1;
+    int i2=id2;
+
+    if(id1>id2) {
+      i1=id2;
+      i2=id1;
+    }
+   return ivec3(simParams.maxNumParticles*i2+i1, i1, i2);
+}
+
+
+int GetConstraintIndex(int id1, int id2)
+{
+    int i1=id1;
+    int i2=id2;
+
+    if(id1>id2) {
+      i1=id2;
+      i2=id1;
+    }
+   return simParams.maxNumParticles*i2+i1;
+}
+
+
+void ActivateConstraint(int id1, int id2, float dist)
+{
+  ivec3 indexC=GetConstraintIndexVec(id1, id2);
+  if(constraintsData[indexC.x].cactive==-1)
+  {
+    //constraintsData[indexC.x].cactive=1;
+    int indexConstraint=atomicAdd(constraintNum[0],1);
+    int tempE=atomicExchange(constraintsData[indexC.x].cactive,1);
+    constraintsData[indexC.x].id1=indexC.y;
+    constraintsData[indexC.x].id2=indexC.z;
+    constraintsData[indexC.x].length_init=dist;
+
+    //particles[id1].constructSize.x=particles[id1].constructSize.x+1;
+    int indexConstraintid1=atomicAdd(particles[id1].constructSize,1);
+    //particles[id2].constructSize.x=particles[id2].constructSize.x+1;
+    int indexConstraintid2=atomicAdd(particles[id2].constructSize,1);
+
+  }
+}
+
+
+vec2 Fv(inout Particle p0, Particle p1)
+{
+  float vectLength=length(p1.pos_old-p0.pos_old);
+  if(vectLength>0){
+      bool ghost;
+      float d = vectLength;
+
+      //float sc=(p0.radius.x+p1.radius.x)* simDynParams.radius;
+      float sc=simDynParams.radius* simDynParams.radius;
+      float fd = 0.8/(1.+d/sc) - 4.0*exp(-d/sc);
+      vec2 interaction = ((p1.pos_old-p0.pos_old)/vectLength)* min(0.01,fd);
+      //return flocking_force*0.4 + interaction*0.3;
+      return interaction;
+    }
+    else{
+      return vec2(0.0);
+   }
+}
+
+vec2 MaxVelocity(vec2 velocity)
+{
+    float maxVelocity=simDynParams.maxVelocity;
+    velocity*=simDynParams.velocityDamping;
+    float d = length(velocity);
+    if(d>maxVelocity)
+    {
+      return (velocity/d)*maxVelocity;
+    }
+    return velocity;
+}
+
+vec2 MaxVelocity2(vec2 velocity, vec2 force)
+{
+    float maxVelocity=simDynParams.maxVelocity;
+    float d = length(velocity);
+    if(d>maxVelocity)
+    {
+      return (velocity/d)*maxVelocity;
+    }
+
+    if(d>0.001)
+    {
+      vec2 inertia =1.0f + (force) / (d);
+      //float anti_pressure_factor=(std::pow(1.0f / inertia, 2));
+    }
+    return velocity;
+}
+
+void main()
+{
+    // Current SSBO index
+    int index = int(gl_GlobalInvocationID.x);
+    // Don't try to write beyond particle count
+    if (index >=simDynParams.numParticles || index<0)
+    return;
+
+    vec2 force=vec2(0);
+    float distNeightbMax=2.0*simParams.mapCellSize.x;
+
+    int neightbSteps =int(particles[index].neightbSize);
+
+    if(particles[index].constructSize<0)
+        particles[index].constructSize=0;
+
+
+    //  int neightbSteps =min(int(particles[index].neightbSize),32);
+      for(int inp=0; inp<neightbSteps;inp++)
+      {
+          int nindex=neightb[GetNeightbIndex(index,inp)];
+          force+=Fv(particles[index], particles[nindex]);
+          //if(constraintFlag==false )
+          if(
+          //  neightbInfo[nindex]<simDynParams.initConstraintDist &&
+            particles[index].constructSize<=particles[index].constructSizeMax &&
+            particles[nindex].constructSize<=particles[nindex].constructSizeMax &&
+            nindex!=index
+            && simDynParams.removeOneEndConstraints!=1
+            )
+          {
+            vec2 tempDistVec=particles[index].pos_old-particles[nindex].pos_old;
+            float distSQ=length(tempDistVec);
+
+            float initDistSQStart=simDynParams.initConstraintDistStart;
+            float initDistSQStop=simDynParams.initConstraintDistStop;
+            if(distSQ>=initDistSQStart && distSQ<=initDistSQStop )
+              ActivateConstraint(int(index), nindex, distSQ);
+          }
+
+        }
+
+
+  //  ActivateConstraintCreature(int(index), particles[index].creature_id);
+
+    float dt=simDynParams.dt;
+
+    float f, scale = 34.,      // scale of noise
+    sampling = 7.;       // density of vectors
+   //vec2 uv=vec2(1.0-2.0*pointData[indx].coord.x/worldSize.x, 1.0-2.0*pointData[indx].coord.y/worldSize.y);
+    float noiseCoeff=simDynParams.noiseCoeff;
+    vec2 uv=vec2(particles[index].pos_old.x/simParams.worldSize.x,particles[index].pos_old.y/simParams.worldSize.y);
+    vec2 forceNoise=noiseCoeff*0.05*dt*noise2(floor(scale*uv)/sampling,simDynParams.tick );
+    vec2 forceCenter=vec2(0.0);//0.01*normalize(worldSize/2.0-pointData[indx].coord);
+
+    particles[index].vel+=1.0*(particles[index].force+force+1.0*forceCenter)*dt+forceNoise;
+    particles[index].vel=MaxVelocity(particles[index].vel);
+    particles[index].pos+=particles[index].vel*dt;
+
+
+    particles[index].force=vec2(0.0);
+/*
+
+	  instanceData[index].pos=particles[index].pos;
+    instanceData[index].rot = vec2(0, 0);
+    instanceData[index].texIndex=particles[index].constructSize;
+    instanceData[index].scale=10.0;
+
+    particles[index].constructSize=0;
+*/
+
+}

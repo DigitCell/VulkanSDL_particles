@@ -1,0 +1,94 @@
+#version 460
+
+#include "common.glsl"
+
+//#define PARTICLE_BUFFER_BIND_ID 2
+#define INSTANCE_BUFFER_BIND_ID 2
+#define PARTICLE_BUFFER_BIND_ID          3
+#define SIMDYNAMICPARAMS_UNIFORM_BIND_ID 4
+//---VERTEX BUFFER
+//#define VERTEX_BUFFER_BIND_ID   2
+
+layout (binding = 0, rgba8) uniform readonly image2D inputImage;
+layout (binding = 1, rgba8) uniform image2D resultImage;
+
+// Instance 1 : Instance Position storage buffer
+layout(std430, binding = INSTANCE_BUFFER_BIND_ID) buffer PosIns
+{
+   InstanceData instanceData[ ];
+};
+
+layout(std430, binding = PARTICLE_BUFFER_BIND_ID ) buffer Pos {
+   Particle particles[ ];
+};
+
+layout (std430, binding = SIMDYNAMICPARAMS_UNIFORM_BIND_ID ) uniform SIMDYNAMICPARAMS {
+  SimDynamicParametrs simDynParams;
+};
+
+
+
+
+layout (local_size_x = 256) in;
+
+// compute colors
+
+    /*
+    col = pal( p.x, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(1.0,1.0,1.0),vec3(0.0,0.10,0.20) );
+    col = pal( p.x, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(1.0,1.0,1.0),vec3(0.3,0.20,0.20) );
+    col = pal( p.x, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(1.0,1.0,0.5),vec3(0.8,0.90,0.30) );
+    col = pal( p.x, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(1.0,0.7,0.4),vec3(0.0,0.15,0.20) );
+    col = pal( p.x, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(2.0,1.0,0.0),vec3(0.5,0.20,0.25) );
+    col = pal( p.x, vec3(0.8,0.5,0.4),vec3(0.2,0.4,0.2),vec3(2.0,1.0,1.0),vec3(0.0,0.25,0.25) );
+    */
+
+void main()
+{
+
+  int index = int(gl_GlobalInvocationID.x);
+  if (index >=simDynParams.numParticles)
+    return;
+
+  //particles[index].force=vec2(0.0);
+  particles[index].pos_old=particles[index].pos;
+  particles[index].vel_old=particles[index].vel;
+
+  instanceData[index].pos=particles[index].pos;
+  instanceData[index].rot = vec2(0, 0);
+  instanceData[index].texIndex=particles[index].constructSize;
+  instanceData[index].scale=5.0;
+
+  particles[index].constructSize=0;
+
+/*
+	 // instanceData[index].
+	// Fetch neighbouring texels
+	int n = -1;
+	for (int i=-1; i<2; ++i)
+	{
+		for(int j=-1; j<2; ++j)
+		{
+			n++;
+			vec3 rgb = imageLoad(inputImage, ivec2(gl_GlobalInvocationID.x + i, gl_GlobalInvocationID.y + j)).rgb;
+			imageData.avg[n] = (rgb.r + rgb.g + rgb.b) / 3.0;
+		}
+	}
+
+*/
+//	vec4 res = vec4(0.75,1.0,1.0,1.0);
+
+//instanceData[index].texIndex/7.0
+//float(index)/ubo.particleCount
+
+  vec3   col = pal(float(index)/simDynParams.numParticles, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(2.0,1.0,0.0),vec3(0.5,0.20,0.25)  );
+//  vec3   col = pal(instanceData[index].texIndex/9.0,  vec3(0.8,0.5,0.4),vec3(0.2,0.4,0.2),vec3(2.0,1.0,1.0),vec3(0.0,0.25,0.25)  );
+  vec4 res = vec4(col,1.0);
+
+  for (int i=0; i<2; ++i)
+  {
+    for(int j=0; j<2; ++j)
+    {
+	      imageStore(resultImage, ivec2(instanceData[index].pos)+ivec2(i,j), res);
+    }
+  }
+}

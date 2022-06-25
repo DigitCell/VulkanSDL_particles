@@ -1,0 +1,18 @@
+#version 460
+
+#include "common.glsl"
+#define MAPSIZE_BUFFER_BIND_ID 0
+
+layout(std430, binding = MAPSIZE_BUFFER_BIND_ID) buffer MapSize {
+   int mapSize[ ];
+};
+
+
+layout (local_size_x = 256) in;
+
+void main() {
+
+  int indx = int(gl_GlobalInvocationID.x);
+  mapSize[indx]=0;
+  //mapIndexSizeFloat[indx]=0.0;
+}

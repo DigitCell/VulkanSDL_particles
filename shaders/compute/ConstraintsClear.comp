@@ -1,0 +1,67 @@
+#version 460
+
+#include "common.glsl"
+#define PARTICLE_BUFFER_BIND_ID            0
+#define CONSTRAINTSDATA_BUFFER_BIND_ID     1
+#define INSTANCECONSTRAINT_BUFFER_BIND_ID  2
+#define CONSTRAINTNUM_BUFFER_BIND_ID       3
+
+#define SIMDYNAMICPARAMS_UNIFORM_BIND_ID   4
+
+layout(std430, binding = PARTICLE_BUFFER_BIND_ID ) buffer Pos {
+   Particle particles[ ];
+};
+
+layout(std430, binding = CONSTRAINTSDATA_BUFFER_BIND_ID) buffer CONSTRAINTSDATA {
+   Constraint constraintsData[ ];
+};
+
+layout(std430, binding = INSTANCECONSTRAINT_BUFFER_BIND_ID) buffer INSTANCECONSTRAINT {
+    vec2 constraintsPos[ ];
+};
+
+layout(std430, binding = CONSTRAINTNUM_BUFFER_BIND_ID) buffer CONSTRAINTNUM {
+   int constraintNum[ ];
+};
+
+layout (std430, binding = SIMDYNAMICPARAMS_UNIFORM_BIND_ID ) uniform SIMDYNAMICPARAMS {
+    SimDynamicParametrs simDynParams;
+};
+
+layout (local_size_x = 256) in;
+
+
+void main() {
+
+int indx = int(gl_GlobalInvocationID.x);
+if (indx >=simDynParams.max_constraints || indx<0)
+  return;
+
+ if(simDynParams.tick<3)
+    constraintsData[indx].cactive=-1;
+
+ if(indx==0)
+ {
+    constraintNum[0]=0;
+    constraintNum[1]=0;
+ }
+
+  if(constraintsData[indx].cactive==1)
+  {
+      vec2 tempDistVec=particles[constraintsData[indx].id1].pos-particles[constraintsData[indx].id2].pos;
+      float distSQ=dot(tempDistVec,tempDistVec);
+      float breakDistSQ=simDynParams.breakConstraintDist*simDynParams.breakConstraintDist;
+
+      if(distSQ>breakDistSQ)
+      {
+          constraintsData[indx].cactive=-1;
+      }
+      else
+      {
+        //int indexConstraint=atomicAdd(constraintNum[0],1);
+          int tempE1=atomicAdd(particles[constraintsData[indx].id1].constructSize,1);
+          int tempE2=atomicAdd(particles[constraintsData[indx].id2].constructSize,1);
+      }
+  }
+
+}

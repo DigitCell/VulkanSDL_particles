@@ -1,0 +1,100 @@
+#version 460
+#extension  GL_EXT_shader_atomic_float: enable
+
+
+#include "common.glsl"
+
+#define PARTICLE_BUFFER_BIND_ID            0
+#define CONSTRAINTSDATA_BUFFER_BIND_ID     1
+#define INSTANCECONSTRAINT_BUFFER_BIND_ID  2
+
+#define INSTANCEPOLYGON_BUFFER_BIND_ID     3
+
+#define CONSTRAINTNUM_BUFFER_BIND_ID       4
+
+#define SIMDYNAMICPARAMS_UNIFORM_BIND_ID   5
+
+layout(std430, binding = PARTICLE_BUFFER_BIND_ID ) buffer Pos {
+   Particle particles[ ];
+};
+
+layout(std430, binding = CONSTRAINTSDATA_BUFFER_BIND_ID) buffer CONSTRAINTSDATA {
+   Constraint constraintsData[ ];
+};
+
+layout(std430, binding = INSTANCECONSTRAINT_BUFFER_BIND_ID) buffer INSTANCECONSTRAINT {
+    vec2 constraintsPos[ ];
+};
+
+layout(std430, binding = INSTANCEPOLYGON_BUFFER_BIND_ID) buffer INSTANCEPOLYGON {
+    vec2 polygonsPos[ ];
+};
+
+layout(std430, binding = CONSTRAINTNUM_BUFFER_BIND_ID) buffer CONSTRAINTNUM {
+   int constraintNum[ ];
+};
+
+layout (std430, binding = SIMDYNAMICPARAMS_UNIFORM_BIND_ID ) uniform SIMDYNAMICPARAMS {
+    SimDynamicParametrs simDynParams;
+};
+
+
+layout (local_size_x = 256) in;
+
+vec2  spring(vec2 posdif,vec2 veldif, float edgelen)
+{
+    float d = length(posdif);
+    if(d>0.0)
+    {
+      vec2 normPosDif=posdif/d;
+      vec2 vel = normPosDif*(d-edgelen)*simDynParams.stiffnessCoeff; // spring
+      if(dot(veldif,veldif)!=0.)
+      {
+        vel +=normPosDif*( dot(normPosDif,veldif)*simDynParams.dampingCoeff); // damper
+      }
+      return vel;
+    }
+    else
+     return vec2(0);
+}
+
+
+void main()
+{
+  int indx = int(gl_GlobalInvocationID.x);
+  if (indx >=simDynParams.max_constraints || indx<0)
+  return;
+
+  if(constraintsData[indx].cactive==1)
+  {
+        vec2 forceId=spring(particles[constraintsData[indx].id1].pos-particles[constraintsData[indx].id2].pos,
+                  particles[constraintsData[indx].id1].vel-particles[constraintsData[indx].id2].vel,
+                  constraintsData[indx].length_init);
+                //  simDynParams.constraintDist);
+
+        particles[constraintsData[indx].id1].force-=forceId;
+        particles[constraintsData[indx].id2].force+=forceId;
+
+        int indexConstraint=atomicAdd(constraintNum[0],1);
+        constraintsPos[indexConstraint*2+0]=particles[constraintsData[indx].id1].pos;
+        constraintsPos[indexConstraint*2+1]=particles[constraintsData[indx].id2].pos;
+
+        if(particles[constraintsData[indx].id1].constructSize>1 && particles[constraintsData[indx].id2].constructSize>1)
+        {
+
+          int indexConstraint=atomicAdd(constraintNum[1],1);
+          polygonsPos[indexConstraint*2+0]=particles[constraintsData[indx].id1].pos;
+          polygonsPos[indexConstraint*2+1]=particles[constraintsData[indx].id2].pos;
+        }
+        else
+        {
+          if(simDynParams.removeOneEndConstraints==1)
+          {
+              constraintsData[indx].cactive=-1;
+          }
+        }
+
+  }
+
+
+}

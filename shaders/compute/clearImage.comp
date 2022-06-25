@@ -1,0 +1,39 @@
+#version 460
+
+#include "common.glsl"
+//#extension GL_EXT_debug_printf : enable
+
+layout (local_size_x = 16, local_size_y = 16) in;
+
+layout (binding = 0, rgba8) uniform image2D inputImage;
+layout (binding = 1, rgba8) uniform image2D resultImage;
+
+#define SIMDYNAMICPARAMS_UNIFORM_BIND_ID   2
+
+layout (binding = SIMDYNAMICPARAMS_UNIFORM_BIND_ID ) uniform SIMDYNAMICPARAMS {
+  SimDynamicParametrs simDynParams;
+};
+
+
+void main()
+{
+
+//	vec3 rgb =  imageLoad(resultImage, ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y)).rgb;
+  vec3 rgb2 = imageLoad(inputImage, ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y)).rgb;
+
+  vec3 rgb=rgb2;
+
+	if(rgb2.g>0.0 || rgb2.b>0.0 || rgb2.r>0.0)
+  {
+    if(simDynParams.tick%30==0)
+		    rgb=rgb2-vec3(simDynParams.colorDecrease,simDynParams.colorDecrease,simDynParams.colorDecrease);
+
+  }
+  else
+    vec3 rgb=vec3(0.0,0.0,0.0);
+
+
+	//vec4 res = vec4(0.1,0.1,0.1,1.0);
+
+	imageStore(inputImage, ivec2(gl_GlobalInvocationID.xy), vec4(rgb,1.0));
+}
